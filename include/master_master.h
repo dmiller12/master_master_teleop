@@ -29,7 +29,8 @@ template <size_t DOF> class MasterMaster : public barrett::systems::System {
   public:
     Input<jp_type> wamJPIn;
     Input<jv_type> wamJVIn;
-    Output<jt_type> wamJPOutput;
+    Input<jt_type> wamJTIn;
+    Output<jp_type> wamJPOutput;
     explicit MasterMaster(barrett::systems::ExecutionManager *em, char *remoteHost, int port = 5553,
                           const std::string &sysName = "MasterMaster")
         : System(sysName), sock(-1), linked(false), numMissed(NUM_MISSED_LIMIT), theirJp(0.0), wamJPIn(this),
