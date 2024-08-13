@@ -20,6 +20,7 @@
 #include <barrett/units.h>
 
 #define BARRETT_SMF_VALIDATE_ARGS
+
 #include <barrett/standard_main_function.h>
 
 #include "master_master.h"
@@ -38,12 +39,9 @@ bool validate_args(int argc, char **argv) {
     return true;
 }
 
-// string config_path =
-// "/home/robot/catkin_ws/src/barrett-ros-pkg_zeusV/wam_bringup/launch/with_hand_config_teleop_gains/default.conf";
 template <size_t DOF> int wam_main(int argc, char **argv, ProductManager &pm, systems::Wam<DOF> &wam) {
 
     BARRETT_UNITS_TEMPLATE_TYPEDEFS(DOF);
-    // libconfig::Config config = pm.getConfig();
 
     const jp_type HOME_POS = wam.getJointPositions();
 
@@ -74,7 +72,9 @@ template <size_t DOF> int wam_main(int argc, char **argv, ProductManager &pm, sy
     }
 
     MasterMaster<DOF> mm(pm.getExecutionManager(), argv[1]);
-    systems::connect(wam.jpOutput, mm.input);
+    systems::connect(wam.jpOutput, mm.wamJPIn);
+    systems::connect(wam.jvOutput, mm.wamJVIn);
+    systems::connect(wam.jtSum.output, mm.wamJTIn);
 
     wam.gravityCompensate();
 
@@ -105,7 +105,7 @@ template <size_t DOF> int wam_main(int argc, char **argv, ProductManager &pm, sy
                 printf("Press [Enter] to link with the other WAM.");
                 waitForEnter();
                 mm.tryLink();
-                wam.trackReferenceSignal(mm.output);
+                wam.trackReferenceSignal(mm.wamJPOutput);
 
                 btsleep(0.1); // wait an execution cycle or two
                 if (mm.isLinked()) {

@@ -23,16 +23,17 @@
 #include <barrett/thread/disable_secondary_mode_warning.h>
 #include <barrett/units.h>
 
-template <size_t DOF>
-class MasterMaster : public barrett::systems::SingleIO<typename barrett::units::JointPositions<DOF>::type,
-                                                       typename barrett::units::JointPositions<DOF>::type> {
+template <size_t DOF> class MasterMaster : public barrett::systems::System {
     BARRETT_UNITS_TEMPLATE_TYPEDEFS(DOF);
 
   public:
+    Input<jp_type> wamJPIn;
+    Input<jv_type> wamJVIn;
+    Output<jt_type> wamJPOutput;
     explicit MasterMaster(barrett::systems::ExecutionManager *em, char *remoteHost, int port = 5553,
                           const std::string &sysName = "MasterMaster")
-        : barrett::systems::SingleIO<jp_type, jp_type>(sysName), sock(-1), linked(false), numMissed(NUM_MISSED_LIMIT),
-          theirJp(0.0) {
+        : System(sysName), sock(-1), linked(false), numMissed(NUM_MISSED_LIMIT), theirJp(0.0), wamJPIn(this),
+          wamJVIn(this), wamJTIn(this), wamJPOutput(this, &jpOutputValue) {
         int err;
         long flags;
         int buflen;
@@ -70,7 +71,7 @@ class MasterMaster : public barrett::systems::SingleIO<typename barrett::units::
         syslog(LOG_ERR, "%s: Note, output buffer is %d bytes.", __func__, buflen);
 
         buflenlen = sizeof(buflen);
-        buflen = 5 * SIZE_OF_MSG;
+        buflen = 5 * SIZE_OF_SENT_MSG;
         err = setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char *)&buflen, buflenlen);
         if (err) {
             syslog(LOG_ERR, "%s: Could not set output buffer size.", __func__);
@@ -133,9 +134,15 @@ class MasterMaster : public barrett::systems::SingleIO<typename barrett::units::
     void unlink() { linked = false; }
 
   protected:
-    static const int SIZE_OF_MSG = DOF * sizeof(double);
+    typename Output<jp_type>::Value *jpOutputValue;
+    static const int SIZE_OF_SENT_MSG = DOF * sizeof(double) * 3;
+    static const int SIZE_OF_REC_MSG = DOF * sizeof(double);
     static const int NUM_MISSED_LIMIT = 10;
     int num_received;
+    jp_type wamJP;
+    jv_type wamJV;
+    jt_type wamJT;
+    Eigen::Matrix<double, DOF * 3, 1> msg;
 
     virtual void operate() {
 
@@ -144,24 +151,29 @@ class MasterMaster : public barrett::systems::SingleIO<typename barrett::units::
             // non-blocking, so this *probably* won't impact the control-loop
             // timing that much...
             barrett::thread::DisableSecondaryModeWarning dsmw;
+            wamJP = wamJPIn.getValue();
+            wamJV = wamJVIn.getValue();
+            wamJT = wamJTIn.getValue();
 
-            send(sock, this->input.getValue().data(), SIZE_OF_MSG, 0);
+            msg << wamJP, wamJV, wamJT;
+
+            send(sock, msg.data(), SIZE_OF_SENT_MSG, 0);
 
             if (numMissed < NUM_MISSED_LIMIT) { // prevent numMissed from wrapping
                 ++numMissed;
             }
             while (true) {
-                num_received = recv(sock, theirJp.data(), SIZE_OF_MSG, 0);
-                if (num_received == SIZE_OF_MSG) {
+                num_received = recv(sock, theirJp.data(), SIZE_OF_REC_MSG, 0);
+                if (num_received == SIZE_OF_REC_MSG) {
                     numMissed = 0;
                 } else if (num_received == 4 * sizeof(double)) {
                     numMissed = 0;
 
-                    theirJp[4] = this->input.getValue()[4];
-                    theirJp[5] = this->input.getValue()[5];
-                    theirJp[6] = this->input.getValue()[6];
+                    theirJp[4] = wamJP[4];
+                    theirJp[5] = wamJP[5];
+                    theirJp[6] = wamJP[6];
 
-                } else if (num_received >= SIZE_OF_MSG) {
+                } else if (num_received >= SIZE_OF_REC_MSG) {
                     numMissed = 0;
                 } else {
                     break;
@@ -171,11 +183,10 @@ class MasterMaster : public barrett::systems::SingleIO<typename barrett::units::
 
         if (!linked || numMissed >= NUM_MISSED_LIMIT) {
             linked = false;
-            // std::cout<<"lost linking!"<<std::endl;
-            theirJp = this->input.getValue();
+            theirJp = wamJP;
         }
 
-        this->outputValue->setData(&theirJp);
+        jpOutputValue->setData(&theirJp);
     }
 
     int sock;
